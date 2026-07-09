@@ -1,0 +1,42 @@
+name: Dockerfile Lint
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "**/Dockerfile"
+  # Runs only when a Dockerfile changes.
+  # The **/ prefix matches Dockerfiles in any subdirectory
+  # (services/analyzer, services/graph-builder, services/result-api, etc.)
+
+jobs:
+  hadolint:
+    name: Hadolint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install hadolint
+        run: |
+          wget -qO /usr/local/bin/hadolint \
+            https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
+          chmod +x /usr/local/bin/hadolint
+        # hadolint is distributed as a single static binary — no package manager needed.
+        # Pinning to v2.12.0 prevents CI behaviour changing when a new release drops.
+
+      - name: Lint all Dockerfiles
+        run: |
+          find . -name "Dockerfile" -not -path "./.git/*" | sort | while read -r file; do
+            echo "Checking $file"
+            hadolint "$file"
+          done
+        # hadolint checks for:
+        #   - Running as root (missing USER instruction)
+        #   - Using :latest image tags (makes builds non-reproducible)
+        #   - Missing HEALTHCHECK
+        #   - apt-get without --no-install-recommends (bloated layers)
+        #   - COPY . . (copies everything including .env files)
+        #   - RUN commands that can be combined to reduce layer count
+        #
+        # Any violation causes a non-zero exit code and blocks the merge.

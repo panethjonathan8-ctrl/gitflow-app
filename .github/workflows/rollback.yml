@@ -1,0 +1,90 @@
+name: Rollback Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to roll back'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+      image_tag:
+        description: 'Image tag (git SHA) to roll back to — find previous tags in values-dev.yaml git history'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+  # contents: read — the rollback commit goes to gitflow-gitops via
+  # GH_DEPLOY_PAT below, not to this repo.
+
+jobs:
+  rollback:
+    name: Roll back ${{ inputs.environment }} to ${{ inputs.image_tag }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Checkout gitflow-gitops
+        uses: actions/checkout@v4
+        with:
+          repository: panethjonathan8-ctrl/gitflow-gitops
+          token: ${{ secrets.GH_DEPLOY_PAT }}
+          path: gitops
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Verify image tag exists in ECR
+        env:
+          TAG: ${{ inputs.image_tag }}
+          REGION: ${{ vars.AWS_REGION }}
+        run: scripts/verify-image-tag.sh "$TAG" "$REGION"
+        # Fails fast if the requested tag doesn't exist in ECR,
+        # so we never commit a rollback that would leave pods crash-looping.
+
+      - name: Check if EKS cluster exists
+        id: eks-check
+        run: |
+          if aws eks describe-cluster --name gitflow-analyzer-dev --region "${{ vars.AWS_REGION }}" &>/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "EKS cluster found — proceeding with rollback"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "EKS cluster not found — skipping"
+          fi
+
+      - name: Update image tag in values file
+        if: steps.eks-check.outputs.exists == 'true'
+        env:
+          TAG: ${{ inputs.image_tag }}
+          ENV: ${{ inputs.environment }}
+        run: python3 scripts/update-image-tag.py "gitops/k8s/helm/gitflow-analyzer/values-${ENV}.yaml" "$TAG"
+
+      - name: Commit and push rollback tag to gitflow-gitops
+        if: steps.eks-check.outputs.exists == 'true'
+        working-directory: gitops
+        env:
+          TAG: ${{ inputs.image_tag }}
+          ENV: ${{ inputs.environment }}
+        run: ../scripts/commit-rollback-tag.sh "$TAG" "$ENV"
+        # ArgoCD detects this commit and rolls the deployment back within ~3 minutes.
+        # No kubectl or helm commands needed — Git is the source of truth.
+
+      - name: Print rollback summary
+        if: steps.eks-check.outputs.exists == 'true'
+        run: |
+          echo "================================"
+          echo "Rollback triggered"
+          echo "Environment: ${{ inputs.environment }}"
+          echo "Rolling back to image tag: ${{ inputs.image_tag }}"
+          echo "ArgoCD will complete the rollback within ~3 minutes"
+          echo "================================"

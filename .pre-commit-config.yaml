@@ -1,0 +1,49 @@
+# Pre-commit hooks — run the same checks as CI locally before every commit.
+#
+# Setup (one time):
+#   pip install pre-commit
+#   pre-commit install
+#
+# Run manually against all files:
+#   pre-commit run --all-files
+
+repos:
+  # ── Standard hygiene ─────────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  # ── Secret scan ──────────────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: no-aws-secrets
+        name: Detect AWS credentials and secrets
+        language: pygrep
+        entry: '(?i)(AKIA[0-9A-Z]{16}|aws_secret_access_key\s*=|private_key\s*=\s*")'
+        types: [text]
+        exclude: \.pre-commit-config\.yaml
+
+  # ── Python — mirrors ci.yml ruff check ───────────────────────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.10
+    hooks:
+      - id: ruff
+        files: ^services/
+
+  # ── Shell scripts — mirrors shell-lint.yml ────────────────────────────────────
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args: [--severity=warning]
+
+  # ── Dockerfiles — mirrors docker-lint.yml ────────────────────────────────────
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint-docker

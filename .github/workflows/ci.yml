@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "services/**"
+
+jobs:
+  # ── Stage 1: Lint ────────────────────────────────────────────────────────────
+  # Runs ruff against all service code.
+  # Catches undefined names, unused imports, and style violations
+  # before any container is built. Completes in ~10 seconds.
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff==0.9.10
+
+      - name: Check code quality
+        run: ruff check services/
+
+  # ── Stage 2: Unit tests ──────────────────────────────────────────────────────
+  # Runs pytest for each service in parallel using a matrix.
+  # Tests cover pure logic functions — no AWS calls, no running containers needed.
+  # Each service installs its own requirements so failures are isolated.
+  test:
+    name: "Test (${{ matrix.service }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # fail-fast: false — if analyzer tests fail, graph-builder and result-api
+      # still run. You see all failures at once instead of one at a time.
+      matrix:
+        service: [analyzer, graph-builder, result-api]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pytest -r services/${{ matrix.service }}/requirements.txt
+
+      - name: Run tests
+        run: pytest services/${{ matrix.service }}/tests/ -v
+
+  # ── Stage 3: Build ───────────────────────────────────────────────────────────
+  # Builds Docker images to verify the Dockerfiles are valid and all
+  # dependencies install correctly inside the container.
+  # Only runs after lint and all tests pass — no point building broken code.
+  build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build analyzer
+        run: docker build services/analyzer/ --tag gitflow-analyzer/analyzer:ci
+
+      - name: Build graph-builder
+        run: docker build services/graph-builder/ --tag gitflow-analyzer/graph-builder:ci
+
+      - name: Build result-api
+        run: docker build services/result-api/ --tag gitflow-analyzer/result-api:ci

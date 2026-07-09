@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GitFlow Analyzer</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.29.2/cytoscape.min.js"></script>
+  <script src="https://unpkg.com/cytoscape-fcose@2.2.0/cytoscape-fcose.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0f0f0f;
+      color: #d4d4d4;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: #141414;
+      border-bottom: 1px solid #252525;
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #e4e4e4;
+    }
+
+    header span {
+      font-size: 12px;
+      color: #666666;
+      background: #1e1e1e;
+      padding: 2px 8px;
+      border-radius: 12px;
+      border: 1px solid #333333;
+    }
+
+    .layout {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .sidebar {
+      width: 320px;
+      background: #141414;
+      border-right: 1px solid #252525;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      flex-shrink: 0;
+    }
+
+    .sidebar-section {
+      padding: 16px;
+      border-bottom: 1px solid #1e1e1e;
+    }
+
+    .sidebar-section h2 {
+      font-size: 12px;
+      font-weight: 600;
+      color: #555555;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 12px;
+    }
+
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    input[type="text"] {
+      background: #0a0a0a;
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+      color: #d4d4d4;
+      font-size: 13px;
+      padding: 8px 12px;
+      width: 100%;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input[type="text"]:focus {
+      border-color: #7c3aed;
+    }
+
+    input[type="text"]::placeholder { color: #444444; }
+
+    button {
+      background: #5b21b6;
+      border: 1px solid #7c3aed;
+      border-radius: 6px;
+      color: #e4e4e4;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 16px;
+      transition: background 0.2s;
+      width: 100%;
+    }
+
+    button:hover { background: #7c3aed; }
+    button:disabled { background: #1e1e1e; border-color: #2a2a2a; color: #444444; cursor: not-allowed; }
+
+    .spinner {
+      display: none;
+      text-align: center;
+      padding: 8px;
+      color: #666666;
+      font-size: 13px;
+    }
+
+    .spinner.active { display: block; }
+
+    .error {
+      display: none;
+      background: #3d1f1f;
+      border: 1px solid #f85149;
+      border-radius: 6px;
+      color: #f85149;
+      font-size: 12px;
+      margin-top: 8px;
+      padding: 8px 12px;
+    }
+
+    .error.active { display: block; }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 0;
+      font-size: 13px;
+    }
+
+    .stat-label { color: #666666; }
+    .stat-value { color: #e4e4e4; font-weight: 500; }
+
+    .lang-bar {
+      display: flex;
+      height: 6px;
+      border-radius: 3px;
+      overflow: hidden;
+      margin: 8px 0;
+      background: #1e1e1e;
+    }
+
+    .lang-bar-fill {
+      height: 100%;
+      transition: width 0.5s ease;
+    }
+
+    .lang-list { list-style: none; }
+
+    .lang-list li {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 3px 0;
+      font-size: 12px;
+    }
+
+    .lang-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .lang-name { color: #d4d4d4; flex: 1; }
+    .lang-pct { color: #666666; }
+
+    .framework-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .badge {
+      background: #2e1065;
+      border: 1px solid #7c3aed40;
+      border-radius: 12px;
+      color: #a78bfa;
+      font-size: 11px;
+      padding: 2px 10px;
+    }
+
+    .empty {
+      color: #444444;
+      font-size: 12px;
+      font-style: italic;
+    }
+
+    .legend {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: #666666;
+    }
+
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    #graph-container {
+      flex: 1;
+      position: relative;
+      background: #0a0a0a;
+    }
+
+    #graph { width: 100%; height: 100%; }
+
+    .graph-hint {
+      position: absolute;
+      bottom: 16px;
+      right: 16px;
+      background: #141414cc;
+      border: 1px solid #252525;
+      border-radius: 6px;
+      color: #444444;
+      font-size: 11px;
+      padding: 6px 10px;
+      pointer-events: none;
+    }
+
+    .reset-view-btn {
+      position: absolute;
+      bottom: 48px;
+      right: 16px;
+      background: #1e1e1e;
+      border: 1px solid #333333;
+      border-radius: 6px;
+      color: #888888;
+      font-size: 11px;
+      font-weight: 500;
+      padding: 5px 10px;
+      cursor: pointer;
+      display: none;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .reset-view-btn:hover {
+      background: #2a2a2a;
+      color: #d4d4d4;
+    }
+
+    .graph-empty {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      color: #444444;
+    }
+
+    .graph-empty svg { margin-bottom: 12px; opacity: 0.3; }
+    .graph-empty p { font-size: 14px; }
+    .graph-empty small { font-size: 12px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2">
+    <circle cx="12" cy="12" r="3"/><circle cx="3" cy="6" r="2"/><circle cx="21" cy="6" r="2"/>
+    <circle cx="3" cy="18" r="2"/><circle cx="21" cy="18" r="2"/>
+    <line x1="5" y1="6" x2="10" y2="11"/><line x1="19" y1="6" x2="14" y2="11"/>
+    <line x1="5" y1="18" x2="10" y2="13"/><line x1="19" y1="18" x2="14" y2="13"/>
+  </svg>
+  <h1>GitFlow Analyzer</h1>
+  <span>dependency graph</span>
+</header>
+
+<div class="layout">
+  <div class="sidebar">
+
+    <div class="sidebar-section">
+      <h2>Analyze Repository</h2>
+      <div class="input-group">
+        <input type="text" id="repo-url" placeholder="https://github.com/user/repo" />
+        <button id="analyze-btn" onclick="analyze()">Analyze</button>
+      </div>
+      <div class="spinner" id="spinner">Cloning and analyzing…</div>
+      <div class="error" id="error"></div>
+    </div>
+
+    <div class="sidebar-section" id="stats-section" style="display:none">
+      <h2>Graph Stats</h2>
+      <div class="stat-row">
+        <span class="stat-label">Files</span>
+        <span class="stat-value" id="stat-files">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Modules</span>
+        <span class="stat-value" id="stat-modules">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Dependencies</span>
+        <span class="stat-value" id="stat-edges">—</span>
+      </div>
+    </div>
+
+    <div class="sidebar-section" id="lang-section" style="display:none">
+      <h2>Languages</h2>
+      <div class="lang-bar" id="lang-bar"></div>
+      <ul class="lang-list" id="lang-list"></ul>
+    </div>
+
+    <div class="sidebar-section" id="fw-section" style="display:none">
+      <h2>Frameworks</h2>
+      <div class="framework-list" id="fw-list"></div>
+    </div>
+
+    <div class="sidebar-section">
+      <h2>Legend</h2>
+      <div class="legend">
+        <div class="legend-item">
+          <div class="legend-dot" style="background:#7c3aed"></div>
+          <span>Source file (colour = directory)</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-dot" style="background:#0891b2"></div>
+          <span>Imported module / package</span>
+        </div>
+      </div>
+      <div id="group-legend" style="margin-top:10px;display:none">
+        <div style="font-size:11px;color:#555;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.8px">Directories</div>
+        <div id="group-legend-items" class="legend"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div id="graph-container">
+    <div id="graph"></div>
+    <div class="graph-empty" id="graph-empty">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="12" r="3"/><circle cx="3" cy="6" r="2"/><circle cx="21" cy="6" r="2"/>
+        <circle cx="3" cy="18" r="2"/><circle cx="21" cy="18" r="2"/>
+        <line x1="5" y1="6" x2="10" y2="11"/><line x1="19" y1="6" x2="14" y2="11"/>
+        <line x1="5" y1="18" x2="10" y2="13"/><line x1="19" y1="18" x2="14" y2="13"/>
+      </svg>
+      <p>Enter a GitHub repo URL to visualise its dependency graph</p>
+      <small>Supports any public GitHub repository</small>
+    </div>
+    <button class="reset-view-btn" id="reset-view-btn" onclick="resetView()">⊙ Reset view</button>
+    <div class="graph-hint" id="graph-hint" style="display:none">
+      Scroll to zoom · drag to pan · click a node to highlight
+    </div>
+  </div>
+</div>
+
+<script>
+const LANG_COLORS = [
+  '#7c3aed','#0891b2','#059669','#b45309','#4f46e5',
+  '#be185d','#0369a1','#6d28d9','#047857','#9f1239'
+];
+
+// Palette for directory groups — distinct enough to tell apart at a glance.
+const GROUP_COLORS = [
+  '#7c3aed','#059669','#b45309','#be185d','#0369a1',
+  '#6d28d9','#047857','#9f1239','#1d4ed8','#b91c1c',
+  '#0e7490','#4d7c0f','#92400e','#6b21a8','#0f766e'
+];
+
+let cy = null;
+let groupColorMap = {};
+
+function initGraph() {
+  cy = cytoscape({
+    container: document.getElementById('graph'),
+    elements: [],
+    style: [
+      {
+        selector: 'node[type = "file"]',
+        style: {
+          'background-color': '#7c3aed',  // overridden per-node by group colour
+          'border-width': 0,
+          'shape': 'ellipse',
+          'label': 'data(shortLabel)',
+          'color': '#bbbbbb',
+          'font-size': 10,
+          'text-valign': 'bottom',
+          'text-halign': 'center',
+          'text-margin-y': 4,
+          'width': 7,
+          'height': 7,
+          'text-max-width': 100,
+          'text-wrap': 'ellipsis',
+          // Hidden until zoomed in — hub nodes override this per-node in renderGraph
+          'min-zoomed-font-size': 20
+        }
+      },
+      {
+        selector: 'node[type = "module"]',
+        style: {
+          'background-color': '#1e4d5c',
+          'border-width': 0,
+          'shape': 'ellipse',
+          'label': 'data(label)',
+          'color': '#aaaaaa',
+          'font-size': 10,
+          'text-valign': 'bottom',
+          'text-halign': 'center',
+          'text-margin-y': 4,
+          'width': 5,
+          'height': 5,
+          'min-zoomed-font-size': 20
+        }
+      },
+      {
+        selector: 'edge',
+        style: {
+          'width': 0.8,
+          'line-color': '#5a5a5a',
+          'target-arrow-shape': 'none',
+          'curve-style': 'straight',
+          'opacity': 0.6
+        }
+      },
+      {
+        selector: 'node.highlighted',
+        style: {
+          'border-width': 3,
+          'border-color': '#a78bfa',
+          'border-opacity': 0.9,
+          'color': '#ffffff',
+          'min-zoomed-font-size': 0,  // always show label on clicked node
+          'opacity': 1
+        }
+      },
+      {
+        selector: 'node.dimmed',
+        style: { 'opacity': 0.08 }
+      },
+      {
+        selector: 'edge.highlighted',
+        style: { 'line-color': '#a78bfa', 'width': 1.5, 'opacity': 0.9 }
+      },
+      {
+        selector: 'edge.dimmed',
+        style: { 'opacity': 0.03 }
+      }
+    ],
+    layout: { name: 'preset' },
+    wheelSensitivity: 0.3,
+    minZoom: 0.1,
+    maxZoom: 4
+  });
+
+  cy.on('tap', 'node', function(e) {
+    const node = e.target;
+    const connected = node.connectedEdges();
+    const neighbours = connected.connectedNodes();
+
+    cy.elements().removeClass('highlighted dimmed');
+    cy.elements().not(node).not(connected).not(neighbours).addClass('dimmed');
+    node.addClass('highlighted');
+    neighbours.addClass('highlighted');
+    connected.addClass('highlighted');
+  });
+
+  cy.on('tap', function(e) {
+    if (e.target === cy) {
+      cy.elements().removeClass('highlighted dimmed');
+    }
+  });
+}
+
+async function analyze() {
+  const url = document.getElementById('repo-url').value.trim();
+  if (!url) return;
+
+  const btn = document.getElementById('analyze-btn');
+  const spinner = document.getElementById('spinner');
+  const errorEl = document.getElementById('error');
+
+  btn.disabled = true;
+  spinner.classList.add('active');
+  errorEl.classList.remove('active');
+  document.getElementById('graph-empty').style.display = 'none';
+
+  try {
+    const res = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_url: url })
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Analysis failed');
+    }
+
+    renderResults(data);
+
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.classList.add('active');
+    document.getElementById('graph-empty').style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    spinner.classList.remove('active');
+  }
+}
+
+function renderResults(data) {
+  renderStats(data.graph);
+  renderLanguages(data.languages || {});
+  renderFrameworks(data.frameworks || []);
+  renderGraph(data.graph);
+}
+
+function renderStats(graph) {
+  const files = graph.nodes.filter(n => n.type === 'file').length;
+  const modules = graph.nodes.filter(n => n.type === 'module').length;
+  document.getElementById('stat-files').textContent = files;
+  document.getElementById('stat-modules').textContent = modules;
+  document.getElementById('stat-edges').textContent = graph.edge_count;
+  document.getElementById('stats-section').style.display = 'block';
+}
+
+function renderLanguages(languages) {
+  const section = document.getElementById('lang-section');
+  const bar = document.getElementById('lang-bar');
+  const list = document.getElementById('lang-list');
+
+  const entries = Object.entries(languages).sort((a, b) => b[1] - a[1]);
+  if (!entries.length) { section.style.display = 'none'; return; }
+
+  bar.innerHTML = entries.map(([ , pct], i) =>
+    `<div class="lang-bar-fill" style="width:${pct}%;background:${LANG_COLORS[i % LANG_COLORS.length]}"></div>`
+  ).join('');
+
+  list.innerHTML = entries.map(([lang, pct], i) =>
+    `<li>
+      <div class="lang-dot" style="background:${LANG_COLORS[i % LANG_COLORS.length]}"></div>
+      <span class="lang-name">${lang}</span>
+      <span class="lang-pct">${pct.toFixed(1)}%</span>
+    </li>`
+  ).join('');
+
+  section.style.display = 'block';
+}
+
+function renderFrameworks(frameworks) {
+  const section = document.getElementById('fw-section');
+  const list = document.getElementById('fw-list');
+
+  if (!frameworks.length) {
+    list.innerHTML = '<span class="empty">None detected</span>';
+  } else {
+    list.innerHTML = frameworks.map(f => `<span class="badge">${f}</span>`).join('');
+  }
+  section.style.display = 'block';
+}
+
+function buildGroupColorMap(nodes) {
+  const groups = [...new Set(nodes.filter(n => n.group).map(n => n.group))].sort();
+  groupColorMap = {};
+  groups.forEach((g, i) => {
+    groupColorMap[g] = GROUP_COLORS[i % GROUP_COLORS.length];
+  });
+
+  // Render directory legend
+  const legendEl = document.getElementById('group-legend');
+  const itemsEl = document.getElementById('group-legend-items');
+  if (groups.length > 1) {
+    itemsEl.innerHTML = groups.map(g =>
+      `<div class="legend-item">
+        <div class="legend-dot" style="background:${groupColorMap[g]}"></div>
+        <span>${g}</span>
+      </div>`
+    ).join('');
+    legendEl.style.display = 'block';
+  } else {
+    legendEl.style.display = 'none';
+  }
+}
+
+function renderGraph(graph) {
+  if (!cy) initGraph();
+
+  buildGroupColorMap(graph.nodes);
+
+  const elements = [
+    ...graph.nodes.map(n => ({
+      data: {
+        id: n.id,
+        label: n.label,
+        shortLabel: n.label.includes('/') ? n.label.split('/').pop() : n.label,
+        type: n.type,
+        group: n.group || null,
+        color: n.type === 'file' && n.group ? groupColorMap[n.group] : null
+      }
+    })),
+    ...graph.edges.map((e, i) => ({
+      data: { id: `e${i}`, source: e.source, target: e.target }
+    }))
+  ];
+
+  cy.elements().remove();
+  cy.add(elements);
+
+  // Apply group colour, degree-based size, and label visibility (Obsidian-style).
+  cy.nodes().forEach(node => {
+    const isFile = node.data('type') === 'file';
+    const color = node.data('color');
+    if (isFile && color) {
+      node.style({ 'background-color': color });
+    }
+    // Hub nodes grow larger; leaf nodes stay as tiny dots — same as Obsidian.
+    const deg = node.degree(false);
+    const base = isFile ? 7 : 5;
+    const size = Math.min(base + deg * 2.5, 32);
+    node.style({ width: size, height: size });
+    // Hub nodes (3+ connections) show their label at normal zoom.
+    // Leaf nodes only show their label when the user zooms in closely.
+    node.style({ 'min-zoomed-font-size': deg >= 3 ? 8 : 20 });
+  });
+
+  const fcoseOpts = {
+    name: 'fcose',
+    quality: 'default',
+    animate: true,
+    animationDuration: 900,
+    randomize: true,
+    fit: true,
+    padding: 50,
+    // Nodes repel each other — higher = more breathing room between clusters.
+    nodeRepulsion: () => 5500,
+    // Connected nodes are pulled to this distance apart.
+    idealEdgeLength: edge => {
+      const sg = edge.source().data('group');
+      const tg = edge.target().data('group');
+      // Same-directory files sit closer together, forming tight clusters.
+      return sg && tg && sg === tg ? 60 : 110;
+    },
+    edgeElasticity: () => 0.45,
+    // Gravity pulls the whole graph toward the centre so it doesn't drift apart.
+    gravity: 0.25,
+    gravityRange: 3.8,
+    numIter: 2500,
+  };
+  // Fall back to built-in cose if the fcose CDN script failed to load.
+  try {
+    cy.layout(fcoseOpts).run();
+  } catch (e) {
+    cy.layout({ name: 'cose', animate: true, animationDuration: 900,
+                 nodeRepulsion: 8000, idealEdgeLength: 80, padding: 50 }).run();
+  }
+
+  document.getElementById('graph-hint').style.display = 'block';
+  document.getElementById('reset-view-btn').style.display = 'block';
+}
+
+function resetView() {
+  if (cy) {
+    cy.elements().removeClass('highlighted dimmed');
+    cy.fit(undefined, 30);
+  }
+}
+
+document.getElementById('repo-url').addEventListener('keydown', e => {
+  if (e.key === 'Enter') analyze();
+});
+
+initGraph();
+</script>
+
+</body>
+</html>

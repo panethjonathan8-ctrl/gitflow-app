@@ -1,0 +1,253 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # ── Stage 1: Build ────────────────────────────────────────────────────────────
+  # Builds all three Docker images and pushes them to ECR.
+  # Also uploads the static frontend to S3 and invalidates CloudFront.
+  # Checks whether EKS is running once here — all deploy jobs read the output.
+  build:
+    name: Build and Push Images
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.tag.outputs.short_sha }}
+      cluster_exists: ${{ steps.eks-check.outputs.exists }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
+        id: tag
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "Image tag: $SHORT_SHA"
+
+      - name: Check if EKS cluster exists
+        id: eks-check
+        run: |
+          if aws eks describe-cluster --name gitflow-analyzer-dev --region "${{ vars.AWS_REGION }}" &>/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "EKS cluster found — deploy jobs will run"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "EKS cluster not running — deploy jobs will skip EKS steps"
+          fi
+
+      - name: Build and push analyzer
+        run: |
+          IMAGE="${{ vars.ECR_REGISTRY }}/gitflow-analyzer/analyzer:${{ steps.tag.outputs.short_sha }}"
+          docker build --tag "$IMAGE" --tag "${IMAGE%:*}:latest" services/analyzer/
+          docker push "$IMAGE"
+          docker push "${IMAGE%:*}:latest"
+
+      - name: Build and push graph-builder
+        run: |
+          IMAGE="${{ vars.ECR_REGISTRY }}/gitflow-analyzer/graph-builder:${{ steps.tag.outputs.short_sha }}"
+          docker build --tag "$IMAGE" --tag "${IMAGE%:*}:latest" services/graph-builder/
+          docker push "$IMAGE"
+          docker push "${IMAGE%:*}:latest"
+
+      - name: Build and push result-api
+        run: |
+          IMAGE="${{ vars.ECR_REGISTRY }}/gitflow-analyzer/result-api:${{ steps.tag.outputs.short_sha }}"
+          docker build --tag "$IMAGE" --tag "${IMAGE%:*}:latest" services/result-api/
+          docker push "$IMAGE"
+          docker push "${IMAGE%:*}:latest"
+
+      - name: Deploy frontend to S3
+        run: |
+          aws s3 cp services/frontend/static/index.html \
+            s3://${{ vars.FRONTEND_BUCKET }}/index.html \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          DIST_ID=$(aws ssm get-parameter \
+            --name "/gitflow-analyzer/dev/cloudfront-distribution-id" \
+            --query "Parameter.Value" --output text)
+          aws cloudfront create-invalidation \
+            --distribution-id "$DIST_ID" \
+            --paths "/*" \
+            --no-cli-pager
+
+  # ── Stage 2: Deploy to Dev ────────────────────────────────────────────────────
+  # Commits the new image tag to values-dev.yaml, then waits for ArgoCD to sync
+  # the gitflow-analyzer-dev namespace and runs a smoke test.
+  deploy-dev:
+    name: Deploy to Dev
+    runs-on: ubuntu-latest
+    needs: [build]
+    permissions:
+      id-token: write
+      contents: read
+      # contents: read is enough here — the commit goes to gitflow-gitops via
+      # GH_DEPLOY_PAT below, not to this repo, so this job never writes here.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The Helm values files and ArgoCD Application manifests live in
+      # gitflow-gitops, not this repo. GH_DEPLOY_PAT is a PAT scoped to push
+      # to gitflow-gitops's main directly (bypassing its branch protection —
+      # a deliberate, narrow exception for this one automated commit, not a
+      # general bypass).
+      - name: Checkout gitflow-gitops
+        uses: actions/checkout@v4
+        with:
+          repository: panethjonathan8-ctrl/gitflow-gitops
+          token: ${{ secrets.GH_DEPLOY_PAT }}
+          path: gitops
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Update image tag
+        env:
+          TAG: ${{ needs.build.outputs.image_tag }}
+        run: python3 scripts/update-image-tag.py gitops/k8s/helm/gitflow-analyzer/values-dev.yaml "$TAG"
+
+      - name: Commit and push to gitflow-gitops
+        working-directory: gitops
+        env:
+          TAG: ${{ needs.build.outputs.image_tag }}
+        run: ../scripts/commit-image-tag.sh "$TAG" k8s/helm/gitflow-analyzer/values-dev.yaml
+
+      - name: Configure kubectl
+        # Each job runs on a fresh VM with no shared state from other jobs.
+        # Every job that needs kubectl must run update-kubeconfig on its own runner.
+        if: needs.build.outputs.cluster_exists == 'true'
+        run: aws eks update-kubeconfig --name gitflow-analyzer-dev --region ${{ vars.AWS_REGION }}
+
+      - name: Bootstrap ArgoCD applications
+        if: needs.build.outputs.cluster_exists == 'true'
+        run: scripts/bootstrap-argocd.sh gitops
+
+      - name: Wait for ArgoCD to sync
+        if: needs.build.outputs.cluster_exists == 'true'
+        run: scripts/wait-for-argocd.sh gitflow-analyzer-dev
+
+      - name: Smoke test
+        if: needs.build.outputs.cluster_exists == 'true'
+        run: scripts/smoke-test.sh gitflow-analyzer-dev
+
+  # ── Stage 3: Deploy to Staging ───────────────────────────────────────────────
+  # Only runs after the dev smoke test passes.
+  # Same pattern as dev — different values file, different namespace.
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build, deploy-dev]
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout gitflow-gitops
+        uses: actions/checkout@v4
+        with:
+          repository: panethjonathan8-ctrl/gitflow-gitops
+          token: ${{ secrets.GH_DEPLOY_PAT }}
+          path: gitops
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Update image tag
+        env:
+          TAG: ${{ needs.build.outputs.image_tag }}
+        run: python3 scripts/update-image-tag.py gitops/k8s/helm/gitflow-analyzer/values-staging.yaml "$TAG"
+
+      - name: Commit and push to gitflow-gitops
+        working-directory: gitops
+        env:
+          TAG: ${{ needs.build.outputs.image_tag }}
+        run: ../scripts/commit-image-tag.sh "$TAG" k8s/helm/gitflow-analyzer/values-staging.yaml
+
+      - name: Configure kubectl
+        if: needs.build.outputs.cluster_exists == 'true'
+        run: aws eks update-kubeconfig --name gitflow-analyzer-dev --region ${{ vars.AWS_REGION }}
+
+      - name: Wait for ArgoCD to sync
+        if: needs.build.outputs.cluster_exists == 'true'
+        run: scripts/wait-for-argocd.sh gitflow-analyzer-staging
+
+      - name: Smoke test
+        if: needs.build.outputs.cluster_exists == 'true'
+        run: scripts/smoke-test.sh gitflow-analyzer-staging
+
+  # ── Stage 4: Deploy to Production ────────────────────────────────────────────
+  # Blocked on a human approval in GitHub UI before this job starts.
+  # Setup: repo Settings → Environments → production → Required reviewers → add yourself.
+  # No smoke test — by this point the code has passed two automated tests and
+  # a human review. If something goes wrong, roll back manually via the rollback workflow.
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build, deploy-staging]
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout gitflow-gitops
+        uses: actions/checkout@v4
+        with:
+          repository: panethjonathan8-ctrl/gitflow-gitops
+          token: ${{ secrets.GH_DEPLOY_PAT }}
+          path: gitops
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Update image tag
+        env:
+          TAG: ${{ needs.build.outputs.image_tag }}
+        run: python3 scripts/update-image-tag.py gitops/k8s/helm/gitflow-analyzer/values-production.yaml "$TAG"
+
+      - name: Commit and push to gitflow-gitops
+        working-directory: gitops
+        env:
+          TAG: ${{ needs.build.outputs.image_tag }}
+        run: ../scripts/commit-image-tag.sh "$TAG" k8s/helm/gitflow-analyzer/values-production.yaml
+
+      - name: Configure kubectl
+        if: needs.build.outputs.cluster_exists == 'true'
+        run: aws eks update-kubeconfig --name gitflow-analyzer-dev --region ${{ vars.AWS_REGION }}
+
+      - name: Wait for ArgoCD to sync
+        if: needs.build.outputs.cluster_exists == 'true'
+        run: scripts/wait-for-argocd.sh gitflow-analyzer-production
