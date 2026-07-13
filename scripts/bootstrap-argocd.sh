@@ -1,11 +1,15 @@
 #!/bin/bash
-# Registers the three gitflow-analyzer ArgoCD Applications (dev/staging/production).
+# Registers the ArgoCD root Application (app-of-apps pattern). The root
+# Application's source is k8s/argocd/apps/ in gitflow-gitops — ArgoCD syncs
+# every Application manifest in that directory automatically, so this script
+# only ever needs to apply the one root manifest, never the individual
+# per-environment/component ones.
 # Safe to run on every deploy — kubectl apply is idempotent.
 # If ArgoCD is not yet ready (e.g. cluster just created), the script exits
 # cleanly so the rest of the pipeline is not blocked.
 #
 # Usage: scripts/bootstrap-argocd.sh <path-to-gitflow-gitops-checkout>
-# The manifests live in the gitflow-gitops repo, not this one — the caller
+# The manifest lives in the gitflow-gitops repo, not this one — the caller
 # (deploy.yml) checks that repo out first and passes its local path here.
 set -e
 
@@ -19,17 +23,7 @@ kubectl wait --for=condition=available deployment/argocd-server \
   exit 0
 }
 
-echo "Applying ArgoCD Application manifests..."
-kubectl apply -f "$GITOPS_DIR/k8s/argocd/application-dev.yaml"
-kubectl apply -f "$GITOPS_DIR/k8s/argocd/application-staging.yaml"
-kubectl apply -f "$GITOPS_DIR/k8s/argocd/application-production.yaml"
+echo "Applying ArgoCD root Application manifest..."
+kubectl apply -f "$GITOPS_DIR/k8s/argocd/root.yaml"
 
-# Remove the old single-namespace Application if it still exists from before
-# the multi-env migration. The finalizer deletes all resources it managed
-# in the gitflow-analyzer namespace as part of the deletion.
-if kubectl get application gitflow-analyzer -n argocd &>/dev/null; then
-  echo "Removing legacy Application gitflow-analyzer (replaced by gitflow-analyzer-dev)..."
-  kubectl delete application gitflow-analyzer -n argocd
-fi
-
-echo "ArgoCD Applications registered — syncs will begin within ~3 minutes"
+echo "ArgoCD root Application registered — child apps will sync within ~3 minutes"
