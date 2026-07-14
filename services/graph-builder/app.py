@@ -1,7 +1,7 @@
 import os
 import logging
 from flask import Flask, request, jsonify
-from graph_builder import build_graph
+from graph_builder import build_graph, is_valid_github_url
 from prometheus_flask_exporter import PrometheusMetrics
 
 logging.basicConfig(
@@ -32,6 +32,9 @@ def build():
         return jsonify({"error": "Missing repo_url"}), 400
 
     repo_url = data["repo_url"].strip()
+
+    if not is_valid_github_url(repo_url):
+        return jsonify({"error": "Only https://github.com/... repository URLs are supported"}), 400
 
     logger.info(f"Building graph for: {repo_url}")
 

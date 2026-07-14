@@ -1,7 +1,7 @@
 import os
 import logging
 from flask import Flask, request, jsonify
-from analyzer import analyze_repo
+from analyzer import analyze_repo, is_valid_github_url
 from prometheus_flask_exporter import PrometheusMetrics
 
 logging.basicConfig(
@@ -33,8 +33,8 @@ def analyze():
 
     repo_url = data["repo_url"].strip()
 
-    if "github.com" not in repo_url:
-        return jsonify({"error": "Only GitHub repos supported"}), 400
+    if not is_valid_github_url(repo_url):
+        return jsonify({"error": "Only https://github.com/... repository URLs are supported"}), 400
 
     logger.info(f"Analyzing: {repo_url}")
 
