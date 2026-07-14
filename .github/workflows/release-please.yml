@@ -15,7 +15,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # Turns on GitHub's native auto-merge for the release PR instead of
+      # merging it immediately — it still waits for any required checks or
+      # reviews configured on the branch, it just removes the manual click.
+      # `pr` is a JSON string of the PullRequest object (root-package output,
+      # since this repo's release-please-config.json has a single "." path).
+      - name: Enable auto-merge on the release PR
+        if: ${{ steps.release.outputs.pr }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ fromJSON(steps.release.outputs.pr).number }}
+        run: gh pr merge --squash --auto "$PR_NUMBER"
