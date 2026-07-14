@@ -26,9 +26,14 @@ jobs:
       # reviews configured on the branch, it just removes the manual click.
       # `pr` is a JSON string of the PullRequest object (root-package output,
       # since this repo's release-please-config.json has a single "." path).
+      # Parsing happens in the run: script, not via fromJSON() in an env:
+      # expression — GitHub Actions evaluates env: expressions before
+      # checking if:, so fromJSON() on the empty string this step gets on a
+      # run with no releasable commits would fail the whole step even though
+      # if: was about to skip it.
       - name: Enable auto-merge on the release PR
-        if: ${{ steps.release.outputs.pr }}
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ fromJSON(steps.release.outputs.pr).number }}
-        run: gh pr merge --squash --auto "$PR_NUMBER"
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
+        run: gh pr merge --squash --auto "$(echo "$RELEASE_PR" | jq -r .number)"
