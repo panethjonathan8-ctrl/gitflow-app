@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.4](https://github.com/panethjonathan8-ctrl/gitflow-app/compare/v0.2.3...v0.2.4) (2026-07-14)
+
+
+### Bug Fixes
+
+* enforce a real timeout on repository cloning ([#18](https://github.com/panethjonathan8-ctrl/gitflow-app/issues/18)) ([ef10ad2](https://github.com/panethjonathan8-ctrl/gitflow-app/commit/ef10ad2439bf9806d4aec2eb4022ea2f97f213be)), closes [#17](https://github.com/panethjonathan8-ctrl/gitflow-app/issues/17)
+
 ## [0.2.3](https://github.com/panethjonathan8-ctrl/gitflow-app/compare/v0.2.2...v0.2.3) (2026-07-14)
 
 
