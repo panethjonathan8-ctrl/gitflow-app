@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/panethjonathan8-ctrl/gitflow-app/compare/v0.2.1...v0.2.2) (2026-07-14)
+
+
+### Bug Fixes
+
+* gh pr merge fails with "not a git repository" ([#12](https://github.com/panethjonathan8-ctrl/gitflow-app/issues/12)) ([cc82658](https://github.com/panethjonathan8-ctrl/gitflow-app/commit/cc826584a86ef6cc1e10e4e96b5080a544b754e4)), closes [#11](https://github.com/panethjonathan8-ctrl/gitflow-app/issues/11)
+
 ## [0.2.1](https://github.com/panethjonathan8-ctrl/gitflow-app/compare/v0.2.0...v0.2.1) (2026-07-14)
 
 
