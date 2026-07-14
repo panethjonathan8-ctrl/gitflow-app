@@ -31,9 +31,14 @@ jobs:
       # checking if:, so fromJSON() on the empty string this step gets on a
       # run with no releasable commits would fail the whole step even though
       # if: was about to skip it.
+      # --repo is required: this job never runs actions/checkout, so there's
+      # no local .git directory for gh to detect the target repository from
+      # — without it, gh pr merge fails with "not a git repository".
+      # GITHUB_REPOSITORY ("owner/repo") is a default env var GitHub Actions
+      # provides on every step, no need to set it explicitly.
       - name: Enable auto-merge on the release PR
         if: ${{ steps.release.outputs.prs_created == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_PR: ${{ steps.release.outputs.pr }}
-        run: gh pr merge --squash --auto "$(echo "$RELEASE_PR" | jq -r .number)"
+        run: gh pr merge --repo "$GITHUB_REPOSITORY" --squash --auto "$(echo "$RELEASE_PR" | jq -r .number)"
