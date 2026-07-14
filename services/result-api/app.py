@@ -1,6 +1,7 @@
 import os
 import logging
 import requests
+from urllib.parse import urlsplit
 from flask import Flask, request, jsonify
 from prometheus_flask_exporter import PrometheusMetrics
 from sqlalchemy.exc import OperationalError
@@ -14,6 +15,19 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+def is_valid_github_url(repo_url: str) -> bool:
+    """
+    True only for a well-formed https://github.com/... URL.
+
+    Parses the URL instead of doing a substring check so a host like
+    github.com.attacker.com (which contains "github.com" but isn't it)
+    is correctly rejected. Mirrors the same check in analyzer and
+    graph-builder — this service has no shared module to import it from.
+    """
+    parts = urlsplit(repo_url)
+    return parts.scheme == "https" and parts.hostname == "github.com"
 
 app = Flask(__name__)
 metrics = PrometheusMetrics(app, excluded_paths=["/health"])
@@ -63,8 +77,8 @@ def analyze():
 
     repo_url = data["repo_url"].strip()
 
-    if "github.com" not in repo_url:
-        return jsonify({"error": "Only GitHub repos supported"}), 400
+    if not is_valid_github_url(repo_url):
+        return jsonify({"error": "Only https://github.com/... repository URLs are supported"}), 400
 
     logger.info("Orchestrating analysis for: %s", repo_url)
 

@@ -1,11 +1,15 @@
+import logging
 import os
 import tempfile
 import shutil
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 from git import Repo
 from pygments.lexers import guess_lexer_for_filename
 from pygments.util import ClassNotFound
 from secret_manager import get_github_token
+
+logger = logging.getLogger(__name__)
 
 
 # Directories whose contents are vendored, generated, or not source code.
@@ -78,24 +82,46 @@ FRAMEWORK_MAP = {
 }
 
 
+def is_valid_github_url(repo_url: str) -> bool:
+    """
+    True only for a well-formed https://github.com/... URL.
+
+    Parses the URL instead of doing a substring check so a host like
+    github.com.attacker.com (which contains "github.com" but isn't it)
+    is correctly rejected.
+    """
+    parts = urlsplit(repo_url)
+    return parts.scheme == "https" and parts.hostname == "github.com"
+
+
+def _build_authenticated_url(repo_url: str, token: str) -> str:
+    """
+    Rebuild repo_url with the token as URL userinfo, e.g.
+    https://TOKEN@github.com/user/repo.git
+
+    Only ever called after is_valid_github_url has confirmed the host is
+    exactly github.com — rebuilding from the parsed, validated hostname
+    (rather than string-replacing a prefix) means the token can't end up
+    addressed to an attacker-chosen host.
+    """
+    parts = urlsplit(repo_url)
+    netloc = f"{token}@{parts.hostname}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
 def clone_repo(repo_url: str) -> str:
     """
     Clone a GitHub repository into a temporary directory.
     Returns the path to the cloned repo.
     The caller is responsible for deleting the temp dir when done.
     """
-    token = get_github_token()
+    if not is_valid_github_url(repo_url):
+        raise ValueError("Only https://github.com/... repository URLs are supported")
 
+    token = get_github_token()
     # Inject the token into the URL so git can authenticate.
-    # Format: https://TOKEN@github.com/user/repo.git
     # The token never appears in logs because we build the URL in memory.
-    if "github.com" in repo_url:
-        authenticated_url = repo_url.replace(
-            "https://github.com",
-            f"https://{token}@github.com"
-        )
-    else:
-        authenticated_url = repo_url
+    authenticated_url = _build_authenticated_url(repo_url, token)
 
     temp_dir = tempfile.mkdtemp(prefix="gitflow-")
 
@@ -110,7 +136,12 @@ def clone_repo(repo_url: str) -> str:
         return temp_dir
     except Exception as e:
         shutil.rmtree(temp_dir, ignore_errors=True)
-        raise ValueError(f"Failed to clone repository: {str(e)}")
+        # GitPython's exception text includes the exact command it ran,
+        # which contains the token embedded in authenticated_url — log a
+        # redacted copy server-side and never return the raw text to the
+        # caller, or the token leaks in the API response.
+        logger.error("Clone failed for %s: %s", repo_url, str(e).replace(token, "***"))
+        raise ValueError("Failed to clone repository — it may be private, deleted, or the URL is invalid.")
 
 
 def _detect_file_language(filepath: Path) -> str | None:
