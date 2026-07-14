@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/panethjonathan8-ctrl/gitflow-app/compare/v0.2.2...v0.2.3) (2026-07-14)
+
+
+### Bug Fixes
+
+* stored XSS via attacker-controlled repository directory names ([#15](https://github.com/panethjonathan8-ctrl/gitflow-app/issues/15)) ([25c02e5](https://github.com/panethjonathan8-ctrl/gitflow-app/commit/25c02e5ad178630288306150714015c9f5d02b22)), closes [#14](https://github.com/panethjonathan8-ctrl/gitflow-app/issues/14)
+
 ## [0.2.2](https://github.com/panethjonathan8-ctrl/gitflow-app/compare/v0.2.1...v0.2.2) (2026-07-14)
 
 
