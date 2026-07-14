@@ -1,10 +1,11 @@
 import logging
 import os
+import signal
+import subprocess
 import tempfile
 import shutil
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
-from git import Repo
 from pygments.lexers import guess_lexer_for_filename
 from pygments.util import ClassNotFound
 from secret_manager import get_github_token
@@ -109,6 +110,38 @@ def _build_authenticated_url(repo_url: str, token: str) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
+CLONE_TIMEOUT_SECONDS = 60
+
+
+def _clone_with_timeout(authenticated_url: str, dest: str, timeout: int = CLONE_TIMEOUT_SECONDS) -> None:
+    """
+    Run `git clone --depth=1` as a subprocess with a hard wall-clock timeout.
+
+    GitPython's own kill_after_timeout kwarg is not reliable for this: it
+    only signals the top-level `git` process it spawned, but for an https
+    clone git execs a separate git-remote-https child to actually do the
+    network I/O. Killing just the parent leaves that child (and the
+    connection it's blocked on) running until the OS's own TCP retry
+    timeout fires — around 130s on Linux — regardless of the timeout we
+    asked for. Running the clone in its own process group and killing the
+    whole group on timeout takes the orphaned child down too.
+    """
+    proc = subprocess.Popen(
+        ["git", "clone", "--depth=1", "--", authenticated_url, dest],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        _, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        proc.communicate()
+        raise TimeoutError(f"git clone exceeded {timeout}s timeout")
+    if proc.returncode != 0:
+        raise RuntimeError(stderr.decode(errors="replace"))
+
+
 def clone_repo(repo_url: str) -> str:
     """
     Clone a GitHub repository into a temporary directory.
@@ -126,17 +159,13 @@ def clone_repo(repo_url: str) -> str:
     temp_dir = tempfile.mkdtemp(prefix="gitflow-")
 
     try:
-        Repo.clone_from(
-            authenticated_url,
-            temp_dir,
-            depth=1,
-            # depth=1 is a shallow clone — only the latest commit.
-            # Full clones of large repos can be gigabytes.
-        )
+        _clone_with_timeout(authenticated_url, temp_dir)
+        # --depth=1 is a shallow clone — only the latest commit.
+        # Full clones of large repos can be gigabytes.
         return temp_dir
     except Exception as e:
         shutil.rmtree(temp_dir, ignore_errors=True)
-        # GitPython's exception text includes the exact command it ran,
+        # Exception text (git's stderr) includes the exact command it ran,
         # which contains the token embedded in authenticated_url — log a
         # redacted copy server-side and never return the raw text to the
         # caller, or the token leaks in the API response.
