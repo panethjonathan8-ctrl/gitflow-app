@@ -588,12 +588,26 @@ function buildGroupColorMap(nodes) {
   const legendEl = document.getElementById('group-legend');
   const itemsEl = document.getElementById('group-legend-items');
   if (groups.length > 1) {
-    itemsEl.innerHTML = groups.map(g =>
-      `<div class="legend-item">
-        <div class="legend-dot" style="background:${groupColorMap[g]}"></div>
-        <span>${g}</span>
-      </div>`
-    ).join('');
+    // Directory names (g) come from the analyzed repo's own filesystem —
+    // fully attacker-controlled. Built with DOM APIs and textContent
+    // instead of innerHTML/template strings so a directory literally named
+    // for a script payload can never be interpreted as markup.
+    itemsEl.innerHTML = '';
+    groups.forEach(g => {
+      const item = document.createElement('div');
+      item.className = 'legend-item';
+
+      const dot = document.createElement('div');
+      dot.className = 'legend-dot';
+      dot.style.background = groupColorMap[g];
+
+      const label = document.createElement('span');
+      label.textContent = g;
+
+      item.appendChild(dot);
+      item.appendChild(label);
+      itemsEl.appendChild(item);
+    });
     legendEl.style.display = 'block';
   } else {
     legendEl.style.display = 'none';
