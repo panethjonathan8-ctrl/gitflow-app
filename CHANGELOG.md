@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/panethjonathan8-ctrl/gitflow-app/compare/v0.2.0...v0.2.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* don't crash the auto-merge step on runs with no releasable commits ([db99708](https://github.com/panethjonathan8-ctrl/gitflow-app/commit/db997084b275c1834bad1f497fd25975ea84eff1))
+* don't crash the auto-merge step on runs with no releasable commits ([2e89bcf](https://github.com/panethjonathan8-ctrl/gitflow-app/commit/2e89bcf339fa2c4274582abcd26060ab3ed0048c)), closes [#8](https://github.com/panethjonathan8-ctrl/gitflow-app/issues/8)
+
 ## [0.2.0](https://github.com/panethjonathan8-ctrl/gitflow-app/compare/v0.1.0...v0.2.0) (2026-07-14)
 
 
